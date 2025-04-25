@@ -1,7 +1,9 @@
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
-from .serializers import UserSerializer, KeystrokeFeatureSerializer , Account_numberSerializer
-from .models import User, KeystrokeFeature
+from .serializers import *
+from .models import User, KeystrokeFeature , Transaction
+from .fraud_detector import FraudDetector
+import pandas as pd
 from rest_framework import status
 from django.contrib.auth import authenticate, login
 from rest_framework.authtoken.models import Token
@@ -80,6 +82,65 @@ def secure_login(request):
         return Response({'success': True, 'token': token.key, 'confidence': result['confidence']})
     return Response({'error': 'Invalid credentials'}, status=403)
 
+
+def get_user_data(user):
+    txns = Transaction.objects.filter(user=user).order_by('created_at')
+    return pd.DataFrame(list(txns.values()))
+
+
+@api_view(['POST'])
+def log_transaction(request):
+    serializer = TransactionSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+
+    transaction = serializer.save()
+    user = transaction.user
+    txns = Transaction.objects.filter(user=user)
+
+    # Train model after 20 transactions
+    model_path = f"models/{user.id}_detector.joblib"
+    if txns.count() >= 20:
+        if os.path.exists(model_path):
+            detector = FraudDetector.load(model_path)
+            print("Model exists. Loading...")
+        else:
+            df = get_user_data(user)
+            print("Columns in DataFrame:", df.columns)
+            detector = FraudDetector(contamination=0.02)
+            df = detector.engineer_features(df)
+            detector.fit(df)
+            detector.save(model_path)
+
+        # latest = df.iloc[-1]
+        df = get_user_data(user)
+        prediction = detector.predict(df.tail(1)).iloc[0]
+
+        # Save prediction details
+        transaction.anomaly_score = prediction['anomaly_score']
+        transaction.predicted_fraud = bool(prediction['predicted_fraud'])
+        transaction.txn_frequency = prediction['txn_frequency']
+        transaction.amount_deviation = prediction['amount_deviation']
+        transaction.save()
+
+        return Response({
+            'message': 'Transaction logged and prediction made.',
+            'predicted_fraud': transaction.predicted_fraud,
+            'anomaly_score': transaction.anomaly_score,
+        })
+
+    return Response({'message': 'Transaction logged. Need 20 transactions to start prediction.'})
+
+
+
+
+
+
+
+
+
+
+
 # api testing
 '''
 curl -X POST http://localhost:8000/api/login/ \
@@ -152,3 +213,24 @@ curl -X POST http://127.0.0.1:8000/secure-login/ \
   "transactions": [{ "amount": 200, "hourOfDay": 14, ... }]
 }
 '''
+
+
+
+'''
+{
+    "amount": 200.50,
+    "time_since_last_txn": 3600,
+    "hour_of_day": 14,
+    "distance_from_home": 5.2,
+    "merchant_risk": 2,
+    "merchant_category": "electronics",
+    "user": 1
+}
+'''
+'''
+Columns in DataFrame: Index(['id', 'user_id', 'amount', 'time_since_last_txn', 'hour_of_day',
+       'distance_from_home', 'merchant_risk', 'merchant_category', 'is_fraud',
+       'created_at', 'anomaly_score', 'predicted_fraud', 'txn_frequency',
+       'amount_deviation'],
+      dtype='object')
+      '''

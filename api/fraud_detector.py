@@ -20,10 +20,10 @@ class FraudDetector:
 
     def _initialize_pipeline(self):
         numeric_features = [
-            'amount', 'timeSinceLastTxn', 'distanceFromHome',
-            'txnTime', 'txnFrequency', 'amountDeviation', 'sineHour', 'cosHour'
+            'amount', 'time_since_last_txn', 'distance_from_home',
+            'txn_time', 'txn_frequency', 'amount_deviation', 'sineHour', 'cosHour'
         ]
-        categorical_features = ['merchantCategory', 'merchantRisk']
+        categorical_features = ['merchant_category', 'merchant_risk']
 
         self.preprocessor = ColumnTransformer(transformers=[
             ("num", StandardScaler(), numeric_features),
@@ -43,14 +43,14 @@ class FraudDetector:
 
     def engineer_features(self, df):
 
-        df['sineHour'] = np.sin(2 * np.pi * df['hourOfDay'] / 24)
-        df['cosHour'] = np.cos(2 * np.pi * df['hourOfDay'] / 24)
+        df['sineHour'] = np.sin(2 * np.pi * df['hour_of_day'] / 24)
+        df['cosHour'] = np.cos(2 * np.pi * df['hour_of_day'] / 24)
 
-        df = df.sort_values(['userId', 'hourOfDay'])
-        df['amountDeviation'] = (df['amount'] - df['amount'].rolling(window=30).mean()).abs()
-        df['txnFrequency'] = df['userId'].map(df['userId'].value_counts())
-        df['txnTime'] = np.random.randint(1, 25, len(df))  # simulate txnTime
-        df=df.fillna(0)
+        df = df.sort_values(['user_id', 'hour_of_day'])
+        df['amount_deviation'] = (df['amount'] - df['amount'].rolling(window=30).mean()).abs()
+        df['txn_frequency'] = df['user_id'].map(df['user_id'].value_counts())
+        df['txn_time'] = np.random.randint(1, 25, len(df))  # simulate txnTime
+        df = df.fillna(0).infer_objects()
         return df
 
     def fit(self, df):
@@ -72,17 +72,18 @@ class FraudDetector:
         df = self.engineer_features(df.copy())
         transformed = self.model.named_steps['preprocessor'].transform(df)
         df['anomaly_score'] = self.model.named_steps['detector'].score_samples(transformed)
-        df['predictedFraud'] = (df['anomaly_score'] < self.threshold).astype(int)
+        df['predicted_fraud'] = (df['anomaly_score'] < self.threshold).astype(int)
+        print(df.columns)
         return df
 
     def evaluate(self, df):
-        if "isFraud" not in df.columns:
-            raise ValueError("Data needs an 'isFraud' column for evaluation.")
+        if "is_fraud" not in df.columns:
+            raise ValueError("Data needs an 'is_fraud' column for evaluation.")
 
         preds = self.predict(df)
-        print(classification_report(preds['isFraud'], preds['predictedFraud']))
+        print(classification_report(preds['is_fraud'], preds['predicted_fraud']))
 
-        cm = confusion_matrix(preds['isFraud'], preds['predictedFraud'])
+        cm = confusion_matrix(preds['is_fraud'], preds['predicted_fraud'])
         sns.heatmap(cm, annot=True, fmt='d', cmap="Blues")
         plt.title("Confusion Matrix")
         plt.xlabel("Predicted")
@@ -131,7 +132,7 @@ class TransactionSimulator:
                 np.random.gamma(2, 1.5, n_normal),
                 np.random.exponential(0.3, n_fraud)
             ]),
-            'hourOfDay': np.concatenate([
+            'hour_of_day': np.concatenate([
                 np.random.randint(9, 18, n_normal),
                 np.random.choice([0, 1, 2, 3, 4, 23], n_fraud)
             ]),
@@ -178,7 +179,7 @@ if __name__ == "__main__":
     results = detector.predict(new_data)
 
     print("\nFraud Detection Results:")
-    print(results[results['isFraud'] == 1][['amount', 'merchantCategory', 'anomaly_score']])
+    print(results[results['isFraud'] == 1][['amount', 'merchant_category', 'anomaly_score']])
     # if model train vaako xa vane save garne
     detector.save('fraud_detector.joblib')
     print("model savved suceesfull")

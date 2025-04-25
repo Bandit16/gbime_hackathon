@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, KeystrokeFeature
+from .models import User, KeystrokeFeature , Transaction
 
 class Account_numberSerializer(serializers.ModelSerializer):
     class Meta:
@@ -19,3 +19,8 @@ class KeystrokeFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = KeystrokeFeature
         fields = ['user', 'session_id', 'feature_vector', 'timestamp']
+
+class TransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transaction
+        fields = '__all__'
