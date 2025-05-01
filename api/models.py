@@ -33,11 +33,11 @@ class Transaction(models.Model):
     merchant_category = models.CharField(max_length=50)
     is_fraud = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    txn_frequency = models.IntegerField(null=True, blank=True)
 
     # Prediction results
     anomaly_score = models.FloatField(null=True, blank=True)
     predicted_fraud = models.BooleanField(null=True, blank=True)
-    txn_frequency = models.IntegerField(null=True, blank=True)
     amount_deviation = models.FloatField(null=True, blank=True)
 
     def __str__(self):

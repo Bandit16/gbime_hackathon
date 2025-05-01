@@ -8,6 +8,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
 import os
 import matplotlib.pyplot as plt
+from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras.saving import register_keras_serializable
+
 
 class LSTMAutoEncoderFraudDetection:
     def __init__(self, sequenceLength=20, encodingDim=16, lstmUnit=32):
@@ -61,7 +64,7 @@ class LSTMAutoEncoderFraudDetection:
         decoded = TimeDistributed(Dense(len(self.featureColumns)))(decoded)
         
         self.model = Model(inputSequence, decoded)
-        self.model.compile(optimizer=Adam(), loss="mse")
+        self.model.compile(optimizer=Adam(), loss="mean_squared_error")
 
     def train(self, sequence, validationSplit=0.2, epoch=30, batchSize=64):
         if self.model is None:
@@ -78,8 +81,8 @@ class LSTMAutoEncoderFraudDetection:
         return history
     def setAnomalyThreshold(self, sequence, percentile=95):
         reconstruction = self.model.predict(sequence)
-        mse = np.mean(np.power(sequence - reconstruction, 2), axis=(1, 2))
-        self.threshold = np.percentile(mse, percentile)
+        mean_squared_error = np.mean(np.power(sequence - reconstruction, 2), axis=(1, 2))
+        self.threshold = np.percentile(mean_squared_error, percentile)
 
     def detectAnomalies(self, newSequence):
         if self.model is None:
@@ -88,9 +91,9 @@ class LSTMAutoEncoderFraudDetection:
             raise ValueError("Threshold not set!")
         
         reconstruction = self.model.predict(newSequence)
-        mse = np.mean(np.power(newSequence - reconstruction, 2), axis=(1, 2))
-        anomalies = mse > self.threshold
-        return anomalies, mse
+        mean_squared_error = np.mean(np.power(newSequence - reconstruction, 2), axis=(1, 2))
+        anomalies = mean_squared_error > self.threshold
+        return anomalies, mean_squared_error
 
     def evaluateFraudDetection(self, labeledData, sequence):
         sequenceLabel = labeledData['is_fraud'][self.sequenceLength - 1:].values
@@ -126,13 +129,13 @@ class LSTMAutoEncoderFraudDetection:
         
     def plot_reconstruction_error(self,detector, sequences):
         reconstruction = detector.model.predict(sequences)
-        mse = np.mean(np.square(sequences - reconstruction), axis=(1, 2))
+        mean_squared_error = np.mean(np.square(sequences - reconstruction), axis=(1, 2))
         
         plt.figure(figsize=(8, 5))
-        plt.hist(mse, bins=50, color='skyblue', edgecolor='black')
+        plt.hist(mean_squared_error, bins=50, color='skyblue', edgecolor='black')
         plt.axvline(detector.threshold, color='red', linestyle='dashed', linewidth=2, label=f'Threshold: {detector.threshold:.4f}')
         plt.title('Reconstruction Error Distribution')
-        plt.xlabel('MSE')
+        plt.xlabel('mean_squared_error')
         plt.ylabel('Frequency')
         plt.legend()
         plt.grid(True)
@@ -177,7 +180,7 @@ if __name__ == "__main__":
     if len(new_sequences) > 0:
         anomalies, scores = detector.detectAnomalies(new_sequences)
         print(f"Anomaly detection results: {anomalies}, Scores: {scores}")
-    anamolies,mse=detector.detectAnomalies(newSequence=new_sequences)
+    anamolies,mean_squared_error=detector.detectAnomalies(newSequence=new_sequences)
     print(f"anamolies :{anamolies}")
     # Evaluate if labels exist
     if 'is_fraud' in transaction_data.columns:

@@ -8,6 +8,7 @@ from rest_framework import status
 from django.contrib.auth import authenticate, login
 from rest_framework.authtoken.models import Token
 from .typingModel import keyStrokeAuthenticator
+from .lstm_auto_encoder import LSTMAutoEncoderFraudDetection
 import numpy as np
 import os
 import joblib
@@ -44,7 +45,7 @@ def secure_login(request):
         return Response(serializer.errors, status=400)
 
     # ML: Setup and load model
-    model_path = f"models/{acc}_model.joblib"
+    model_path = f"models/{uname}_model.joblib"
     authenticator = keyStrokeAuthenticator(account_number=acc, buffer_size=100, nu=0.5)
     buffer = list(KeystrokeFeature.objects.filter(user=user)
                   .order_by('-timestamp')[:100]
@@ -62,7 +63,7 @@ def secure_login(request):
             print(f"Error loading model: {e}")
             authenticator.trained = False
     else:
-        print("Model does not exist.")
+        return Response({   'error': 'App bata authentic req pathau'}, status=200)
 
     if len(authenticator.buffer) == authenticator.buffer.maxlen and not authenticator.trained:
         authenticator.train_model()
@@ -130,12 +131,99 @@ def log_transaction(request):
         })
 
     return Response({'message': 'Transaction logged. Need 20 transactions to start prediction.'})
+def get_or_create_detector(user_id):
+    detector = LSTMAutoEncoderFraudDetection(sequenceLength=20)
+    feature_columns = ['amount', 'time_since_last_txn', 'merchant_category', 'distance_from_home']
+    
+    user_model_path = f'models/user_{user_id}_model.h5'
 
+    if os.path.exists(user_model_path):
+        detector.loadModel(user_model_path)
+    else:
+        detector.model = None
+    
+    return detector, feature_columns, user_model_path
 
+@api_view(['POST'])
+def lstm_transaction_view(request):
+    serializer = TransactionSerializer(data=request.data)
+    if serializer.is_valid():
+        transaction = serializer.save()
 
+        # Initialize detector
+        detector, feature_columns, model_path = get_or_create_detector(transaction.user.id)
 
+        # Get user's transaction data
+        df = get_user_data(transaction.user)
 
+        if df.shape[0] < 20:
+            return Response({'message': 'Not enough transactions to predict.'}, status=status.HTTP_200_OK)
 
+        # Prepare feature DataFrame
+        df = df[[
+            'amount', 
+            'time_since_last_txn', 
+            'merchant_category', 
+            'distance_from_home'
+        ]]
+
+        try:
+            
+            sequences = detector.preprocessData(df, feature_columns)
+            print(f"Shape of sequences: {sequences.shape}")
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Train if model not trained
+        if detector.model is None:
+            detector.buildModel()
+            detector.train(sequences)
+            detector.setAnomalyThreshold(sequences)
+            detector.saveModel(model_path)
+            return Response({'message': 'Model trained. Send another transaction to predict.'}, status=status.HTTP_200_OK)
+
+        # Predict
+        detector.setAnomalyThreshold(sequences)
+
+        anomalies, mse_scores = detector.detectAnomalies(sequences)
+        is_fraud = anomalies[-1]
+
+        # Save prediction
+        transaction.predicted_fraud = is_fraud
+        transaction.anomaly_score = mse_scores[-1]
+        transaction.save()
+
+        return Response({'fraud': bool(is_fraud)}, status=status.HTTP_200_OK)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+# def retrain_model(user):
+#     detector = get_user_detector(user)  # load/create user's detector
+#     transactions = Transaction.objects.filter(user=user, is_fraud=True)
+
+#     if transactions.count() >= 20:
+#         # Prepare data
+#         df = pd.DataFrame(list(transactions.values(
+#             'amount', 'time_since_last_txn', 'merchant_category', 'distance_from_home'
+#         )))
+#         feature_columns = ['amount', 'time_since_last_txn', 'merchant_category', 'distance_from_home']
+#         sequences = detector.preprocessData(df, feature_columns)
+
+#         # Retrain
+#         detector.buildModel()
+#         history = detector.train(sequences)
+#         detector.setAnomalyThreshold(sequences)
+
+#         # Save model
+#         save_user_model(detector, user)
+
+# def confirm_fraud(request, txn_id):
+#     txn = Transaction.objects.get(id=txn_id)
+#     txn.is_fraud = True
+#     txn.save()
+
+#     retrain_model(txn.user)
+
+#     return Response({'message': 'Transaction marked as fraud and model retrained.'})
 
 
 
@@ -159,11 +247,11 @@ curl -X POST http://localhost:8000/api/login/ \
 curl -X POST http://127.0.0.1:8000/secure-login/ \
   -H "Content-Type: application/json" \
   -d '{
-    "account_number": "123",
-    "username": "dipesh",
-    "password": "dipesh",
+
+    "user": 1,
+
     "session_id": "session123",
-    "keystroke_features": [0.12, 0.08, 0.09, 0.11, 0.15, 0.07, 0.10, 0.13]
+    "keystroke_features": [0.12, 0.08, 0.09, 0.11, 0.15, 0.07]
 }'
 '''
 
